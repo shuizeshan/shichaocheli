@@ -283,29 +283,29 @@ var ZT = {
 */
 var MAPS = {
   suburb: {
-    id: 'suburb', n: '郊区住宅', d: '低风险区域。丧尸稀疏，民用物资为主。',
-    zmin: 16, zmax: 26, loot: 1, exits: 2, risk: '低', spawnGap: 22,
+    id: 'suburb', n: '郊区住宅', d: '住宅区安静得反常：声音传不远，尸群补员也慢——适合练潜行与听声辨位。',
+    zmin: 16, zmax: 26, loot: 1, exits: 2, risk: '低', spawnGap: 30, noiseMul: 0.55,
     containers: 26, noteMax: 2, timeLimit: 300,
     ztype: { walker: 0.44, runner: 0.14, crawler: 0.20, dog: 0.09, slow: 0.10, brute: 0.03 },
     btype: { home: 0.55, store: 0.25, school: 0.08, fire: 0.06, police: 0.04, hospital: 0.02 }
   },
   city: {
-    id: 'city', n: '商业区', d: '丧尸密度中等。货架与仓储物资丰富，噪音会引来成群的它们。',
-    zmin: 22, zmax: 32, loot: 1.35, exits: 2, risk: '中', spawnGap: 22,
+    id: 'city', n: '商业区', d: '货架与仓储物资远比别处丰富——高档货不小概率出现在货柜里，但尸群密度不低。',
+    zmin: 22, zmax: 32, loot: 1.35, exits: 2, risk: '中', spawnGap: 22, uncommonChance: 0.18,
     containers: 34, noteMax: 3, timeLimit: 360,
     ztype: { walker: 0.30, runner: 0.24, crawler: 0.16, dog: 0.14, slow: 0.10, brute: 0.06 },
     btype: { store: 0.34, home: 0.28, hospital: 0.10, police: 0.10, fire: 0.08, school: 0.10 }
   },
   hospital: {
-    id: 'hospital', n: '市立医院', d: '药品充足，但走廊狭窄。疾行者比例极高。',
-    zmin: 26, zmax: 40, loot: 1.5, exits: 2, risk: '高', spawnGap: 16,
+    id: 'hospital', n: '市立医院', d: '药品充足，但这里的伤口污染得更快——被打一下，感染就压不下去。疾行者比例极高。',
+    zmin: 26, zmax: 40, loot: 1.5, exits: 2, risk: '高', spawnGap: 16, infectMul: 1.5,
     containers: 32, noteMax: 3, medBonus: true, timeLimit: 390,
     ztype: { walker: 0.24, runner: 0.30, crawler: 0.16, dog: 0.12, slow: 0.10, brute: 0.08 },
     btype: { hospital: 0.50, home: 0.18, store: 0.16, police: 0.06, fire: 0.06, school: 0.04 }
   },
   military: {
-    id: 'military', n: '军事基地', d: '只有一条撤离通道。暴君成群，军械与血清在此。',
-    zmin: 30, zmax: 36, loot: 2.0, exits: 1, risk: '极高', spawnGap: 23,
+    id: 'military', n: '军事基地', d: '只有一条撤离通道，任何动静都会传遍整座基地——但步枪、防弹背心与血清就躺在军械箱里。',
+    zmin: 30, zmax: 36, loot: 2.0, exits: 1, risk: '极高', spawnGap: 23, rareChance: 0.2, noiseMul: 1.25,
     containers: 34, noteMax: 2, timeLimit: 420,
     ztype: { walker: 0.22, runner: 0.28, crawler: 0.10, dog: 0.12, slow: 0.04, brute: 0.24 },
     btype: { store: 0.32, police: 0.22, fire: 0.16, hospital: 0.14, school: 0.08, home: 0.08 }
@@ -970,6 +970,10 @@ function rollLoot(type, cfg) {
     else if (type === 'crate') id = r < 0.38 ? pick(['ammo9', 'ammo12', 'ammo762']) : (r < 0.72 ? pick(['scrap', 'cloth', 'wood']) : (r < 0.86 ? 'fuel' : 'bandage'));
     else id = r < 0.44 ? pick(['scrap', 'cloth']) : (r < 0.72 ? 'food' : (r < 0.88 ? 'ammo9' : pick(['bandage', 'medkit'])));
 
+    /* 环境机制：稀有度分层——商业区偏罕见物资（搜刮图）、军事基地偏稀有军械（高收益） */
+    if (cfg.rareChance && Math.random() < cfg.rareChance) id = pick(LOOT_RARE);
+    else if (cfg.uncommonChance && Math.random() < cfg.uncommonChance) id = pick(LOOT_UNCOMMON);
+
     var qty = 1;
     var it = ITEMS[id];
     if (it && it.t === 'ammo') qty = Math.round(rndInt(4, 15) * mul);
@@ -1359,6 +1363,8 @@ function curWeapon() {
 
 function noiseEvent(x, y, radius) {
   var raid = G.raid; if (!raid) return;
+  /* 环境机制：每图噪音传播倍率（郊区安静潜行、军事一点动静全图响应） */
+  radius *= (raid.cfg && raid.cfg.noiseMul) || 1;
   raid.p.noise = 0.4;
   for (var i = 0; i < raid.zombies.length; i++) {
     var z = raid.zombies[i];
@@ -1534,7 +1540,9 @@ function hurtPlayer(dmg, srcAng) {
   floater(p.x, p.y - 20, '-' + Math.round(real), '#ff8080');
   burst(p.x, p.y, 5, '#a03030', 110);
   if (srcAng !== undefined && Math.random() < 0.22) {
-    p.infection = Math.min(100, p.infection + rnd(9, 17));
+    /* 环境机制：医院图伤口污染更快（高风险高回报，医疗箱产出已补偿） */
+    var infMul = (G.raid && G.raid.cfg && G.raid.cfg.infectMul) || 1;
+    p.infection = Math.min(100, p.infection + rnd(9, 17) * infMul);
     addLog('伤口被污染，感染上升。');
   }
   if (p.hp <= 0) { p.hp = 0; endRaid(false); }
