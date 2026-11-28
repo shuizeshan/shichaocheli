@@ -284,28 +284,28 @@ var ZT = {
 var MAPS = {
   suburb: {
     id: 'suburb', n: '郊区住宅', d: '住宅区安静得反常：声音传不远，尸群补员也慢——适合练潜行与听声辨位。',
-    zmin: 16, zmax: 26, loot: 1, exits: 2, risk: '低', spawnGap: 30, noiseMul: 0.55,
+    zmin: 16, zmax: 26, loot: 1, exits: 2, risk: '低', spawnGap: 30, noiseMul: 0.55, mech: '潜行 · 噪音传播 -45%',
     containers: 26, noteMax: 2, timeLimit: 300,
     ztype: { walker: 0.44, runner: 0.14, crawler: 0.20, dog: 0.09, slow: 0.10, brute: 0.03 },
     btype: { home: 0.55, store: 0.25, school: 0.08, fire: 0.06, police: 0.04, hospital: 0.02 }
   },
   city: {
     id: 'city', n: '商业区', d: '货架与仓储物资远比别处丰富——高档货不小概率出现在货柜里，但尸群密度不低。',
-    zmin: 22, zmax: 32, loot: 1.35, exits: 2, risk: '中', spawnGap: 22, uncommonChance: 0.18,
+    zmin: 22, zmax: 32, loot: 1.35, exits: 2, risk: '中', spawnGap: 22, uncommonChance: 0.18, mech: '搜刮 · 罕见物资 18%',
     containers: 34, noteMax: 3, timeLimit: 360,
     ztype: { walker: 0.30, runner: 0.24, crawler: 0.16, dog: 0.14, slow: 0.10, brute: 0.06 },
     btype: { store: 0.34, home: 0.28, hospital: 0.10, police: 0.10, fire: 0.08, school: 0.10 }
   },
   hospital: {
     id: 'hospital', n: '市立医院', d: '药品充足，但这里的伤口污染得更快——被打一下，感染就压不下去。疾行者比例极高。',
-    zmin: 26, zmax: 40, loot: 1.5, exits: 2, risk: '高', spawnGap: 16, infectMul: 1.5,
+    zmin: 26, zmax: 40, loot: 1.5, exits: 2, risk: '高', spawnGap: 16, infectMul: 1.5, mech: '感染 · 伤口污染 ×1.5',
     containers: 32, noteMax: 3, medBonus: true, timeLimit: 390,
     ztype: { walker: 0.24, runner: 0.30, crawler: 0.16, dog: 0.12, slow: 0.10, brute: 0.08 },
     btype: { hospital: 0.50, home: 0.18, store: 0.16, police: 0.06, fire: 0.06, school: 0.04 }
   },
   military: {
     id: 'military', n: '军事基地', d: '只有一条撤离通道，任何动静都会传遍整座基地——但步枪、防弹背心与血清就躺在军械箱里。',
-    zmin: 30, zmax: 36, loot: 2.0, exits: 1, risk: '极高', spawnGap: 23, rareChance: 0.2, noiseMul: 1.25,
+    zmin: 30, zmax: 36, loot: 2.0, exits: 1, risk: '极高', spawnGap: 23, rareChance: 0.2, noiseMul: 1.25, mech: '高压 · 稀有军械 20%',
     containers: 34, noteMax: 2, timeLimit: 420,
     ztype: { walker: 0.22, runner: 0.28, crawler: 0.10, dog: 0.12, slow: 0.04, brute: 0.24 },
     btype: { store: 0.32, police: 0.22, fire: 0.16, hospital: 0.14, school: 0.08, home: 0.08 }
@@ -4384,6 +4384,28 @@ UI.help = function (b) {
   return html;
 };
 
+/* 主线进度链：档案 → 门卡 → 军事基地 → 结局，让玩家在营地一眼看到"现在该干什么" */
+function storyChainHtml(b) {
+  var nc = Array.isArray(b.notes) ? b.notes.length : 0;
+  var hasKey = b.militaryUnlocked || b.keycard;
+  var steps = [
+    { n: '档案 ' + nc + '/6', done: nc >= 6, act: nc < 6 },
+    { n: '取得门卡', done: hasKey, act: nc >= 6 && !hasKey },
+    { n: '军事基地路线', done: b.militaryUnlocked, act: hasKey && !b.militaryUnlocked },
+    { n: '带档案撤离（结局）', done: !!b.ending, act: b.militaryUnlocked && !b.ending }
+  ];
+  if (b.ending) { /* 结局后主线卡变为成就展示 */ steps[0].done = true; steps[1].done = true; steps[2].done = true; steps[3].done = true; }
+  var html = '';
+  for (var i = 0; i < steps.length; i++) {
+    var s = steps[i];
+    var col = s.done ? '#9fc48a' : (s.act ? '#e8c46a' : '#6b7566');
+    var mark = s.done ? '✓ ' : (s.act ? '▶ ' : '· ');
+    html += (i ? '<span style="color:#5a6354"> → </span>' : '') +
+      '<span style="color:' + col + '">' + mark + s.n + '</span>';
+  }
+  return html;
+}
+
 UI.hub = function (b) {
   var html = '';
   var need = 25 + b.day * 3;
@@ -4404,17 +4426,25 @@ UI.hub = function (b) {
     '<div class="card" style="flex:1;min-width:180px"><h3>战绩</h3><div class="muted">出击 ' + b.raids + ' 次<br>成功撤离 ' + b.extracts + ' 次<br>阵亡 ' + b.deaths + ' 次<br>累计击杀 ' + b.totalKills + '</div></div>' +
     '<div class="card" style="flex:1.4;min-width:220px"><h3>仓库物资</h3><div>' + stashSummary(b) + '</div></div>' +
     '</div>' +
+    '<div class="card" style="margin-top:12px"><h3>主线进度</h3><div style="font-size:13px">' + storyChainHtml(b) + '</div><div class="muted" style="font-size:11px;margin-top:6px">档案与门卡必须成功撤离带出才生效，阵亡即丢失。</div></div>' +
     (b.lastBlood ? '<div class="card" style="margin-top:12px;border-color:#5a3a2a"><h3 style="color:#e0a86a">血月结算</h3><div class="muted">' + b.lastBlood + '</div></div>' : '') +
     (b.lastReport ? '<div class="card" style="margin-top:12px"><h3>上一局战报</h3><div class="muted">' + b.lastReport + '</div></div>' : '') +
     (matGap.length ? '<div class="muted" style="margin-top:10px;font-size:11px">材料偏少：' + matGap.join(' · ') + '（去搜刮或制作补充）</div>' : '') +
     (Object.keys(b.damaged || {}).length ? '<div class="muted" style="margin-top:6px;font-size:11px;color:#e08a8a">有 ' + Object.keys(b.damaged).length + ' 件装备损坏，可在「营地建设」里修理。</div>' : '') +
-    '<hr class="sep"><div class="row">' +
-    '<button class="btn primary" data-act="map">出发搜刮</button>' +
+    '<hr class="sep">' +
+    '<div class="row">' +
+    '<button class="btn primary" data-act="map" style="flex:1">出发搜刮</button>' +
     (b.bloodPending && b.bloodDay !== b.day ? '<button class="btn danger" data-act="bloodmoon">迎战血月（5 波防守）</button>' : '') +
+    '</div>' +
+    '<div class="muted" style="margin-top:10px;font-size:11px;color:#8d9a84">— 整备 —</div>' +
+    '<div class="row" style="margin-top:4px">' +
     '<button class="btn" data-act="loadout">装备</button>' +
     '<button class="btn" data-act="craft">制作台</button>' +
-    '<button class="btn" data-act="build">营地建设</button>' +
     '<button class="btn" data-act="skills">技能</button>' +
+    '<button class="btn" data-act="build">营地建设</button>' +
+    '</div>' +
+    '<div class="muted" style="margin-top:10px;font-size:11px;color:#8d9a84">— 管理 —</div>' +
+    '<div class="row" style="margin-top:4px">' +
     '<button class="btn" data-act="stash">仓库</button>' +
     '<button class="btn" data-act="notes">档案</button>' +
     '<button class="btn" data-act="save">手动存档</button>' +
@@ -4431,6 +4461,7 @@ UI.map = function (b) {
     var mk = keysM[i], cfg = MAPS[mk];
     var locked = (mk === 'military' && !b.militaryUnlocked);
     html += '<div class="card"><h3>' + cfg.n + ' <span class="tag">风险 ' + cfg.risk + '</span>' +
+      (cfg.mech ? '<span class="tag" style="color:#e8c46a">' + cfg.mech + '</span>' : '') +
       (locked ? '<span class="tag" style="color:#e08a5a">未解锁</span>' : '') + '</h3>' +
       '<div class="muted">' + cfg.d + '</div>' +
       '<div class="muted" style="margin-top:6px">丧尸 ' + cfg.zmin + '-' + cfg.zmax + ' · 撤离点 ' + cfg.exits + ' · 物资系数 ' + cfg.loot + '</div>' +
