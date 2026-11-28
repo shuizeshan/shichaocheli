@@ -1,17 +1,152 @@
----
-AIGC:
-    Label: "1"
-    ContentProducer: 001191440300708461136T1XGW3
-    ProduceID: 32bb5da1dcc2421bb402c47203a9bca8_3d69e2b0e3ea11f19231525400638852
-    ReservedCode1: 73XG2YClChvnXWLBuMMWe3Tu5ZHonB/Z69KwIyTID0XaWGDUz8d5yQvYITvgxXGC+hKxo6w6rTYlV/FNd6VyYPHdTE27HbZkJ4sf/sN50ZIGgvqReKdAcpw8DPB+B9WWFiJgjD9TCNfLwG3ECB3jFkcCl9KpWknNPD5vpSiZTD7xkOdYm+0sNrj7csQ=
-    ContentPropagator: 001191440300708461136T1XGW3
-    PropagateID: 32bb5da1dcc2421bb402c47203a9bca8_3d69e2b0e3ea11f19231525400638852
-    ReservedCode2: 73XG2YClChvnXWLBuMMWe3Tu5ZHonB/Z69KwIyTID0XaWGDUz8d5yQvYITvgxXGC+hKxo6w6rTYlV/FNd6VyYPHdTE27HbZkJ4sf/sN50ZIGgvqReKdAcpw8DPB+B9WWFiJgjD9TCNfLwG3ECB3jFkcCl9KpWknNPD5vpSiZTD7xkOdYm+0sNrj7csQ=
----
-
 # CHANGELOG / Bug 时间线
 
 格式：每条含【现象】【根因】【修复】【验证】。新条目追加在顶部。
+
+---
+
+## 2026-11-28 · F12 剧情闭环：档案/门卡成功撤离才生效（v1.5.3，v2.0 阶段1）
+
+- 【现象】搜到 note/keycard 后立即写入 `G.base`（notes/keycard/militaryUnlocked），死亡后依旧保留 → 死亡对剧情零代价，与"带不回来等于没拿到"的突袭核心体验冲突。
+- 【根因】`lootContainer()` 对关键物品跳过背包预演直接入清单，`confirmLoot()` 确认时直接调 `collectNote()`/写 `keycard`，入库时机早于撤离结算。
+- 【修复】3 处改动：① `lootContainer()` 关键物品走 `bagAdd` 预演占格（背包满留容器）；② `confirmLoot()` key/note 入玩家背包而非直接写 base；③ `endRaid(true)` 成功时统一归档 note + 解锁 key（死亡/超时全失）。`injectKeyItems()` 兜底保证门卡丢失后可重刷，不会永久卡死。
+- 【验证】先在隔离副本跑通（桩 137/137、撤离率 65.0%、死亡/撤离双场景对比），应用项目文件后回归：4 套桩测试 **137/137 PASS**（loot_check 断言按新语义更新 4 条）；机器人 32 局撤离率 **65.6% PASS**（目标 55%~75%）；真实浏览器冒烟 0 报错。
+- 【影响】剧情收集从"打卡"变成"押运"，死亡代价成立；无新增素材/界面。
+
+---
+
+
+- 【现象】审计记录 P0-1：`MAPS[].containers` 配置 26/34/32/34，实测四图 70~78 个，怀疑容器生成无上限导致经济通胀。
+- 【根因】复核 `addBuilding()` 与补足循环：代码本就是「不足时补足」的下限语义，两个 `while (length < cfg.containers)` 只增不减；实际数量是每栋建筑额外投放 2~3 个的自然结果，并非失控。属于文档语义误解，不是代码缺陷。
+- 【修复】采纳 A 方案：仅在 `DeadExtraction.html` 的 `/* ---------- 地图配置 ---------- */` 处加注释，明确 `containers = 保底下限`、实测约 70~78 个；同步更新 `README.md`、`PLAN.md`、`PROJECT_PLAN.md`、`docs/KNOWN_ISSUES.md`，并顺手修正 README 中两处 v1.5 遗留描述（顶部音乐按钮"点击无效"、切歌"重新起播"）。**不改生成逻辑、不改任何数值**。未执行建议二（存档文本转义）。
+- 【验证】改动前已在隔离副本实测；应用到项目文件后回归：主脚本语法 OK；4 套桩测试 **135/135 PASS**；机器人 40 局撤离率 **70.0% PASS**（与改前完全一致）；四图容器均值 71 / 71.6 / 75.4 / 73.6；噪音对照（隔墙远距 alert 0、近距 3、无遮挡 6）与存档/建筑校验保持修复态；真实浏览器菜单与突袭冒烟 0 报错。
+- 【实测否决】直接裁剪容器到配置值：医疗产出腰斩（医院 medkit 18.3→7.0、郊区 8.3→1.9）、撤离率 65%→50% FAIL；加医疗补偿后仅 55.0% 临界 PASS、军事图 20%。故永久否决，不再作为默认方案。
+
+---
+
+## 2026-11-28 · F10 三项稳定性修复（v1.5.1）
+
+- 【现象】审计遗留三项：① `noiseEvent()` 三元表达式 + 无条件覆盖使 `losClear` 失效，隔墙仍引怪并写入最后目击位置；② `load()` 只补 `undefined` 不校验类型，畸形档可使 `day` 变为非数字；③ `buildingAt()` 全表线性扫描，被视野更新与小地图高频调用。
+- 【流程】先在系统临时目录建隔离副本，对 4 个候选方案逐一实现并量化实测，**确认跑通后才应用到项目文件**；应用前备份 `DeadExtraction.pre-threefix.html`。
+- 【实现】
+  1. `noiseEvent()` 重写判定：距离 ≥ 半径直接跳过；视线通畅 → alert 6 且写 `lastSeen`；被墙遮挡且距离 < 60% 半径 → alert 3 且写 `lastSeen`；被墙遮挡且更远 → 不响应。
+  2. 新增 `sanitizeBase(b, slot)`：数值/布尔/对象/数组逐字段校验，非法值回退 `newBase()` 默认值；`stash`/`skills` 子字段非法则剔除；`load()` 改为 `G.base = sanitizeBase(JSON.parse(s), slot)`。
+  3. `buildingAt()` 改为读取 `m.tileBld[ty*MAPW+tx]` 的 O(1) 查表，无索引时返回 null。
+- 【验证】
+  - 噪音多轮对照：隔墙远距 117 组 alert 5.0→**0**、记住位置 100%→**0%**；隔墙近距 25 组 alert 6.0→**3.0**；无遮挡 2473 组 alert **6.0 不变**。
+  - 畸形档注入：`day` 为 number、stash/notes/skills/loadout 类型合法、keycard 为 boolean。
+  - 建筑索引：2000 随机点对照线性实现 **0 处不一致**，单次 0.10μs→0.06~0.09μs。
+  - 项目文件回归：4 套桩测试 **135/135 PASS**；机器人 40 局撤离率 **70.0% PASS**（基线 65%）；主脚本语法 OK；真实浏览器菜单/突袭/进门/室内 0 报错。
+- 【实测否决】容器裁剪方案：容器数精确达标但医疗产出腰斩（医院 medkit 18.3→7.0、郊区 8.3→1.9），撤离率 **65%→50% FAIL**；加医疗补偿后仅 **55.0% 临界 PASS**、军事图 20%。因此未纳入本轮，等待容器语义拍板。
+
+---
+
+## 2026-11-28 · F09 视听与素材一致性优化（v1.5）
+
+- 【现象】音效风格单薄：脚步不分材质、门声单一、菜单↔突袭切歌时整套节点重建导致音乐从头开始；菜单顶部"音乐"按钮点击无效；HUD 背包按钮鼠标点击被 canvas 拦截；道路/建筑/丧尸缺少层次与类型辨识度。
+- 【实现】
+  1. `SFX.step(mat)` 按道路/木地板/瓷砖/金属/泥地分层；新增 `stepMaterial()` 按地表与建筑类型提供音色线索。
+  2. `SFX.door()` 两段式（门轴吱呀 + 门体落位低频）；`SFX.hurt()` 加低频层；`SFX.shoot()` 为大口径补尾音；`SFX.knock()` 保留按冲量分层。
+  3. `SFX.bgm()` 改为连续层：drone / 风声 / 呼吸 / 心跳常驻，菜单铺底与琶音独立渐变；同模式重复调用不再重建，模式切换只做 0.8~1.4s 淡入淡出。
+  4. `UI.menu()` 顶部音乐按钮补 `data-act="menu_bgm"`，`handleAction()` 增加对应分支并同步按钮文案；音量按钮 title 从 ±5% 改为实际 ±10%。
+  5. CSS `#hudBag{pointer-events:auto}`，鼠标可点开背包；菜单主按钮加渐变与悬停反馈。
+  6. 新增统一色板 `PALETTE`；道路加车道虚线、碎石与裂纹；建筑屋顶加投影/高光和门洞暖光；丧尸按类型区分眼部色彩、朝向箭头与暴君警示环。
+  7. 新增 `PROJECT_PLAN.md` 作为简洁恢复版计划书，README 引用。
+- 【验证】
+  - `door_check` 4 PASS、`loot_check` 25 PASS、`menu_kb_check` 65 PASS、`interior_check` 41 PASS（合计 135/135）。
+  - 真实浏览器：菜单音乐按钮真实鼠标点击使静音状态翻转且文案同步；BGM 连续切换 menu→raid→menu 无异常；局内背包按钮真实点击打开背包；材质音效调用无异常。
+  - `menu_shot.mjs` 1600×900 / 820×520：`overflowBtns=[]`，`cardBottomRatio` 0.424 / 0.357；`cdp_shot.mjs`、`loot_shot.mjs`、`interior_shot.mjs` 全部成功出图。
+  - 同时修复三个截图脚本在中文路径下 `new URL(import.meta.url).pathname` 产生百分号编码导致 ENOENT 的问题，改用 `fileURLToPath`。
+- 【注意】本轮未改玩法数值；容器数量超标、噪音穿墙、存档类型校验仍列在 `docs/KNOWN_ISSUES.md`，需单独决策。
+
+---
+
+## 2026-11-21 · F08 难度曲线校准（P0 第二项）+ v1.3.0
+
+- 【需求】4 张地图难度阶梯需可量化：机器人连跑撤离率应落在 55%~75%，且按风险从低到高递减。
+- 【实现】
+  1. `MAPS` 每图新增 `spawnGap`（探索期丧尸补员间隔，秒）：郊区 22 / 商业区 22 / 医院 16 / 军事 23。
+  2. 重定标 `zmin/zmax`：郊区 16~26、商业区 22~32、医院 26~40、军事 30~36（军事由 40 降到 36 避免必死；商业降密度、医院升密度，以拉开"中 / 高"两档）。
+  3. 删除历史冗余字段 `runner/brute`（生成逻辑只读 `cfg.ztype`，这两个字段从未参与计算，留着会误导后续调参）。
+  4. 新增 `tools/bot_run.js`：vm 桩加载游戏 + BFS 寻路机器人（搜 3 个容器 → 呼叫撤离 → 坚守），逐局统计撤离/死亡/超时/用时/搜刮数/击杀数，并细分"死于搜刮期 / 死于坚守期"；支持传入每图局数。
+  5. 版本号统一：`API_VERSION` 1.2.0 → 1.3.0（菜单右下角同步）。
+- 【根因】原来只有 `zmin/zmax` 一个密度旋钮，四图靠 zmax 单调递增，导致军事基地堆怪到必死、郊区几乎零风险；且刷怪间隔固定 26s，无法体现风险梯度。
+- 【修复】难度 = 密度（zmin/zmax）+ 持续补员压力（spawnGap）两个旋钮分开调，四图形成 87.5% / 75% / 75% / 50% 的递减阶梯。
+- 【验证】
+  - `node tools/bot_run.js 24`（96 局）：郊区 83.3% / 商业 62.5% / 医院 58.3% / 军事 54.2%，合计 64.6%，RESULT: PASS；三组累计 288 局 65.3%。
+  - 回归：`door_check` 4 PASS、`loot_check` 25 PASS、`menu_kb_check` 65 PASS、`interior_check` 41 PASS。
+- 【附带修复】`decorateMap()` 随机摆放在小建筑上有约 16% 概率只落 2 件陈设（门洞 2 格禁区 + 容器占位 + 大件尺寸约束叠加），触发"每栋至少 3 件"偶发 FAIL。已在函数末尾加保底：用 1x1 小件按格扫描（先避开门口 2 格，不足再放宽到仅避门格）补足到 3 件。验证：连续 25 次 `interior_check` 全 PASS，单栋最少 3、平均 6.14 件。
+- 【注意】每图 8 局样本标准差约 ±12pct，单轮结果会在 60%~88% 间跳动；判定必须多轮累计，不要用单轮结果定论。
+
+---
+
+## 2026-11-21 · F07 室内陈设（P0 第一项：建筑内部不再空地砖）
+
+- 【需求】进入建筑后内部只有空地砖，六类建筑内部看起来完全一样，缺乏"被使用过"的场景信息。
+- 【实现】
+  1. `PROP_POOL`：每类建筑 6~7 种专属陈设（医院 病床/推床/输液架/货架/轮椅/柜/水槽；警察局 办公桌/储物柜/证物柜/椅/货架；消防局 工作台/轮胎/挂架/水带/灭火器/办公桌；居民楼 床/沙发/桌/衣柜/电视/地毯/盆栽；校园 课桌/椅/黑板/货架/储物柜/盆栽；商店 货架/托盘/油桶/堆货/帆布）。
+  2. `PROP_SIZE` 定义家具格数（1×1 ~ 3×1），生成时 38% 概率旋转；`PROP_BULKY` 标记大件。
+  3. `decorateMap(m)`：按内部面积决定件数 `clamp(round(inner/5)+1, 4, 10)`（实测平均 5.95 件/栋），逐格校验**必须是地板格**、避开容器格、避开门口 2 格范围，放置后按同池随机抽种类并记 `seed`（供绘制细节抖动）。
+  4. `drawProps()`：俯视贴图式绘制（床有枕头/被褶、货架有分层、黑板带粉笔痕、沙发有扶手），带落地投影与随机微旋转。
+  5. 地板按建筑类型分材质（居民楼木地板条纹、医院冷色小砖、其余水泥），内墙按坐标哈希加裂缝与污渍，另有 2~5 处不规则血迹/污渍椭圆。
+  6. `propSlowAt(m,x,y)`：玩家踩在大件家具格上移速 ×0.74（不阻挡通行，只给穿行阻力感）。
+- 【验证】
+  - `node tools/interior_check.js` → PASS=41 FAIL=0（覆盖：每类建筑陈设种类 ≥6、单栋 3~10 件、平均 ≥4、全部落在地板格、零压容器格、零压门洞 2 格、减速函数在大件内外分别为 0.74/1、未进入建筑不绘制陈设、`drawProps` 渲染冒烟不抛异常、门后仍可达）。
+  - `node --experimental-websocket tools/interior_shot.mjs` → 真实渲染截图 `10_interior_home.png`、`11_interior_hospital.png`，家具可分辨、不堵门洞、无多余描边方框。
+  - 回归：`door_check` 4 PASS、`loot_check` 25 PASS、`menu_kb_check` 65 PASS 均未受影响。
+
+## 2026-11-21 · F06 击退系统（含体型抗性差异化与命中反馈层次）
+
+- 【需求】射击/近战命中僵尸时要有**可见的击退位移与反馈**，不同武器、不同僵尸击退强度要有差异，大型/精英僵尸抗性更高。
+- 【实现】
+  1. 实体新增击退状态：`z.kbx / z.kby`（被打飞的速度，px/s）、`z.kbPower`（当前有效冲量）、`z.stun`、`z.stagger`；常量 `KB_SCALE=3`、`KB_MAX=420`、`KB_DECAY=0.006`。
+  2. 冲量公式 `imp = 武器.kb × (1 − min(0.86, 僵尸.kbRes + 僵尸.armor × 0.55))`，即武器击退值经体型抗性与护甲二次衰减；新增 `kbRes` 字段区分暴君/缓慢丧尸等重型目标。
+  3. 分级反馈：`imp > 2` 触发准星命中标记 + 定向火花 + 分层闷响（`SFX.knock(imp)`）；`imp > 16` 视为重击，追加硬直 `stun = 0.10 + min(0.40, imp/340)`、`stagger = 0.36` 与震屏（上限 13）；`imp ≥ 45` 额外飘出"击退"提示字。
+  4. 位移积分：每帧**先**用 `moveEnt(m, z, kbx*dt, kby*dt)` 积分位移，**再**做 `KB_DECAY` 衰减；受阻（贴墙/撞物）时把速度压到 12% 防止贴墙抖动卡死；硬直期间 AI 自走速度 ×0.16。
+  5. 视觉：`kbPower > 6` 时僵尸按击退方向倾斜（最大 0.42 rad），击退过程中尸体/血条同步偏移方向。
+- 【现象】`tools/menu_kb_check.js` 曾出现近战（撬棍/消防斧）命中后僵尸位移 `dx = 0`，连带的"暴君击退显著小于普通僵尸"断言也因基线为 0 而失败。
+- 【根因】击退速度在位移积分**之前**就被衰减，且硬直把自走速度压到 0.16 倍，采样窗口内读到的是"原地不动"；近战命中帧与采样帧错位时位移被吃掉。
+- 【修复】如上第 4 条：位移先积分、衰减后置；受阻时保留 12% 速度；并在 `step()` 之后读取位移峰值。
+- 【验证】`node tools/menu_kb_check.js` → **PASS=65 FAIL=0**；`node tools/kb_realshot.mjs` 真实浏览器（headless Edge + CDP）实测：撬棍×行尸 `kbPower 60 / 瞬时 dx −152.8 dy −95.2 / 净位移 35.5px / 硬直 0.28s`，消防斧×行尸 `kbPower 110 / dx −280.1 / 净位移 65.1px / 硬直 0.42s`，消防斧×暴君 `kbPower 15.4 / dx −39.2 / 净位移 9.1px / 无硬直`，9 项断言全部 true。截图 `screenshots/08_knockback_compare.png`（四宫格含量化标注）。
+
+## 2026-11-21 · F05 主菜单电影感微动画（城市剪影 / 火光硝烟 / 追逐与抵抗）
+
+- 【需求】主菜单背景从纯黑改为"电影感微动画"：隐约城市剪影、火光与硝烟、怪物追逐人群、警察特警抵抗怪物。
+- 【实现】新增自包含模块 `MENUBG`（`DeadExtraction.html` 第 4192 行起，约 500 行），独立 `<canvas id="menuBgCanvas">` 铺在 CSS 层 `#menuBg`（`position:fixed; inset:0; z-index:1; opacity` 过渡），不干扰原有 `#screen` UI 层：
+  1. **城市剪影**：`buildSkyline()` 程序化生成两层天际线（高楼/矮楼/天线/亮窗），窗光带随机刷新闪烁（`flick` 表再叠加 sin 相位）。
+  2. **火光硝烟**：地面火点（径向渐变 + 呼吸缩放）、竖直升腾烟柱（半透明椭圆叠加 + 风向漂移）、34 颗上升余烬、警报红蓝流光。
+  3. **追逐叙事**：7 名逃难人群从右向左奔逃（带上下颠簸与恐慌步幅抖动），5 只僵尸在人群右后方追击（含 `brute` 与 `dog` 体型），3 名持盾特警 + 警车（红蓝爆闪 + 探照灯柱）在右侧抵抗并间歇开火闪光。
+  4. **舞台分区**：人群固定在 `0.34–0.58 DW`、僵尸 `0.70–1.02 DW`、特警自 `0.585 DW` 起 —— 左侧刻意留白，供标题卡排布，避免动画主体被面板压住。
+  5. **镜头感**：整幅缓慢横移 + 极轻上下浮动（视差），叠加暗角与顶部渐隐，形成"远景拍摄"观感。
+- 【性能】逻辑 30fps 封顶（`acc >= 1/30` 才 `paint()`）、绘制缓冲降采样到视图的 62%（最长边钳制 1920×1080）、静态层（天空/剪影/远景）预渲染到离屏 canvas 后每帧仅 `drawImage`、离开菜单屏 `MENUBG.stop()` 立即取消 rAF，因此进入游戏后零额外开销。
+- 【验证】`node tools/menu_shot.mjs`（headless Edge + CDP，隔离临时 profile）四组分辨率布局断言：1600×900 / 1366×640 / 1024×600 / 820×520 均 `overflowBtns=[]`、`cardScrollOverflow=false`；两帧像素差 16.3% 证明动画在实时运动；`node tools/menu_kb_check.js` 中背景状态断言（`running/crowd/zombies/cops/embers/smokes/fires/canvas`）全部 PASS。截图 `screenshots/06_menu_cinematic.png`、`screenshots/07_menu_bg_animation.png`（隐藏 UI 的纯背景）、`screenshots/09_menu_1024x600.png`（小分辨率）。
+
+## 2026-11-21 · F04 主菜单背景音乐（循环 + 音量 + 静音 + 自动播放策略）
+
+- 【需求】主菜单要有背景音乐，可循环、可调音量/静音，且严格遵守浏览器自动播放策略。
+- 【实现】
+  1. `SFX.bgm(on, mode)` 增加 `menu` / `raid` 双模式：菜单为低沉持续铺底 + 稀疏心跳/低频脉冲，节奏比突袭态更缓，切换屏幕时自动换模式而非中断重来。
+  2. 新增右下角音乐控件 `#bgmCtl`：点按展开音量条（0.1 步进，`stepSetting('bgm', ±1)` 复用已校验通道）+ "音乐/已静音"开关（`toggleBgmMute()`），百分比文字实时刷新；设置写入 `settings.mute` / `settings.bgm` 并随存档持久化。
+  3. 自动播放策略：`bindAudioGesture()` 只在首次真实手势（`pointerdown / mousedown / touchstart / keydown`，`passive`）后 `SFX.unlock()` 再起播，未手势前绝不创建发声节点，因此不会出现控制台 autoplay 警告。
+  4. 菜单顶部另有"音乐：开/关"快捷按钮（`menuBgmBtn`），与右下角控件共享同一状态。
+- 【验证】`node tools/menu_kb_check.js` 断言：`bgmCtlOn=true`、静音切换后 `settings.mute` 翻转、`AudioContext 创建 1 次`（未手势前为 0）、菜单逻辑 900 帧 18ms 无异常；截图 `screenshots/06_menu_cinematic.png` 右下角可见"音乐 50%"控件。
+
+## 2026-11-21 · F03 主菜单版式改为标题卡（不再遮挡背景动画）
+
+- 【现象】主菜单面板居中且纵向铺满，把背景动画的叙事主体（人群/怪物/特警）几乎全部压住。
+- 【根因】面板沿用旧版居中 `flex` 布局 + 全宽卡片，`screen.menu-mode` 未做任何左移与压缩。
+- 【修复】菜单态下卡片改为**左上角标题卡**：`max-width` 收窄、纵向间距压缩、`cardBottomRatio` 控制在 0.44 以内、右侧与下方全部让给动画；同时给 `#screen` 加 `menu-mode` 类统一接管该屏的 padding/gap。小分辨率（≤1024×600）自动再降一档字号与内边距。
+- 【验证】`node tools/menu_shot.mjs` 输出：1600×900 `card={x:51,y:42,w:520,h:349}`、`cardBottomRatio 0.435`、`rightRatio 0.357`；1024×600 `card={x:33,y:22,w:451,h:216}`、`cardBottomRatio 0.396`、`rightRatio 0.472`；四组分辨率 `overflowBtns` 均为空、无滚动溢出。截图 `screenshots/06_menu_cinematic.png`、`screenshots/09_menu_1024x600.png`。
+
+## 2026-11-21 · F02 命中反馈与手感优化（准星命中标记 / 分层音效 / 震屏）
+
+- 【实现】新增 `#hitMark`（18px 十字，跟随目标屏幕坐标、180ms 淡出）与 `HITMARK` 计数器；命中火花按冲量大小加权（2~8 粒、定向喷射）；`SFX.knock(imp)` 按冲量分层：轻击为短促闷响、重击叠加低频冲击与轻微噪声尾音；震屏幅度随冲量线性增长并钳制在 13 以内（避免眩晕）。
+- 【验证】`node tools/kb_realshot.mjs` 断言 `hitFeedback / bruteHitFeedback / stunOnMelee / gunKnockback` 全为 true；截图 `screenshots/08_knockback_compare.png` 命中帧可见 `-26` 伤害数字与红色血条变化。
+
+## 2026-11-21 · F01 主菜单性能与资源收尾
+
+- 【实现】`MENUBG` 首帧前 `initData()` 只跑一次并缓存静态层；`resize` 内部钳制缓冲尺寸（240×140 ~ 1920×1080）；隐藏 `document.hidden` / 离开菜单屏即 `stop()`；无 DOM 环境（Node 桩测试）下只跑逻辑不建 canvas，保证 `menu_kb_check.js` 可无浏览器断言。
+- 【目录整理】`shots/` 下 49 张调试中间图统一移入 `archive/shot_history/`，`screenshots/` 只保留验收图（`01`~`09` 连续编号）；根目录遗留 `.bak` 全部归档到 `archive/`，项目根保持"仅 4 文件 + 4 目录"。
+- 【验证】`node tools/menu_kb_check.js` 中 `menuBg` 状态断言 + `node tools/door_check.js` 4 PASS + `node tools/loot_check.js` 25 PASS 全绿。
 
 ---
 

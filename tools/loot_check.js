@@ -164,7 +164,7 @@ if (keyC) {
   ok('关键物品出现在清单并标记', pl3 && pl3.rows.some(r => r.kind === 'key'));
   ok('确认前不生效', GAME.base.keycard === false);
   GAME.handleAction('loot_ok');
-  ok('确认后门卡生效', GAME.base.keycard === true && GAME.base.militaryUnlocked === true);
+  ok('确认后门卡在背包未解锁', GAME.base.keycard === false && GAME.base.militaryUnlocked === false);
 } else { console.log('skip key case'); }
 
 /* 6) 未搜刮时不误弹面板 */
@@ -191,8 +191,11 @@ ok('确认前门卡未生效', GAME.base.keycard === false);
 const html3 = GAME.uiHtml('lootResult');
 ok('面板标注关键/档案', html3.indexOf('关键') >= 0 && html3.indexOf('档案') >= 0);
 GAME.handleAction('loot_ok');
-ok('确认后门卡生效', GAME.base.keycard === true && GAME.base.militaryUnlocked === true);
-ok('确认后档案归档', GAME.base.notes.indexOf('note1') >= 0);
+ok('确认后门卡在背包未解锁', GAME.base.keycard === false && GAME.base.militaryUnlocked === false);
+ok('确认后档案在背包未归档', GAME.base.notes.indexOf('note1') < 0);
+GAME.endRaid(true);
+ok('撤离后门卡生效', GAME.base.keycard === true && GAME.base.militaryUnlocked === true);
+ok('撤离后档案归档', GAME.base.notes.indexOf('note1') >= 0);
 
 console.log('PASS=' + pass + ' FAIL=' + fail);
 process.exit(fail ? 1 : 0);

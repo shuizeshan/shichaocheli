@@ -2,6 +2,7 @@ import fs from "fs";
 import http from "http";
 import { spawn } from "child_process";
 import path from "path";
+import os from "os";
 
 const PORT = 9455;
 /* 自定位：需先用 Edge 打开调试端口，例如
@@ -10,11 +11,15 @@ const PORT = 9455;
 const PROJ = path.resolve(path.dirname(new URL(import.meta.url).pathname).replace(/^\/([A-Za-z]:)/, "$1"), "..");
 const GAME_URL = "file:///" + path.join(PROJ, "DeadExtraction.html").replace(/\\/g, "/");
 const OUT = path.join(PROJ, "screenshots");
-const PROFILE = path.join(PROJ, "..", ".cache_cdp_profile");
+/* 独立临时 profile：不触碰真实用户配置，避免登录/同步弹窗 */
+const PROFILE = path.join(os.tmpdir(), "marvis-edge", "cdp_shot-" + process.pid + "-" + Date.now());
 
 const EDGE = ["C:\\Program Files (x86)\\Microsoft\\Edge\\Application\\msedge.exe", "C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe"].find(p => fs.existsSync(p));
 const child = spawn(EDGE, ["--headless=new", "--remote-debugging-port=" + PORT, "--user-data-dir=" + PROFILE,
-  "--no-first-run", "--disable-gpu", "--window-size=1380,860", "--allow-file-access-from-files", "about:blank"],
+  "--no-first-run", "--no-default-browser-check", "--disable-gpu",
+  "--disable-sync", "--disable-features=msEdgeIdentityFRE,msEdgeSync,msEdgeSigninPrompt",
+  "--no-service-autorun", "--disable-background-networking",
+  "--window-size=1380,860", "--allow-file-access-from-files", "about:blank"],
   { detached: true, stdio: "ignore" });
 child.unref();
 
