@@ -1521,10 +1521,12 @@ function checkLevelUp() {
   while (b.xp >= 100 * (b.sp + 1)) { b.xp -= 100 * (b.sp + 1); b.sp++; }
 }
 
-function hurtPlayer(dmg, srcAng) {
+function hurtPlayer(dmg, srcAng, srcZ) {
   if (typeof SFX !== 'undefined') SFX.hurt();
   var raid = G.raid; if (!raid) return;
   var p = raid.p;
+  /* 记录伤害来源类型名，阵亡后失败复盘展示死因 */
+  if (srcZ && srcZ.t && srcZ.t.n) p.lastHitBy = srcZ.t.n;
   if (p.hurtCd > 0) return;
   p.hurtCd = 0.32;
   var red = 0;
@@ -1628,7 +1630,7 @@ function updatePlayer(dt) {
   p.hunger = Math.max(0, p.hunger - dt * 0.4);
   p.thirst = Math.max(0, p.thirst - dt * 0.5);
   if (p.hunger <= 0 || p.thirst <= 0) p.hp -= dt * 2.4;
-  if (p.infection > 60) p.hp -= dt * (0.8 + (p.infection - 60) * 0.08);
+  if (p.infection > 60) { p.hp -= dt * (0.8 + (p.infection - 60) * 0.08); if (p.hp <= 0) p.lastHitBy = '感染恶化'; }
   if (p.hp <= 0) { p.hp = 0; endRaid(false); return; }
   if (p.infection >= 100) { p.infection = 100; if (p.hp > 0) { p.hp = 0; endRaid(false); } }
 
@@ -2337,7 +2339,29 @@ function endRaid(success) {
     var spBefore2 = b.sp;
     b.xp += xpGain2;
     checkLevelUp();
-    raid.result = { success: false, gain: [], xp: xpGain2, kills: raid.kills, searched: raid.searched, spGain: b.sp - spBefore2, grade: 'C', damaged: !!raid.damaged, reason: raid.timeout ? 'timeout' : 'dead', lootValue: Math.round(raid.lootValue || 0), time: Math.round(raid.time), limit: raid.timeLimit };
+    /* 失败复盘数据：死因、丢失物资清单、针对性建议 */
+    var lost = [];
+    for (var li = 0; li < p.bag.slots.length; li++) {
+      var ls = p.bag.slots[li];
+      if (!ls) continue;
+      var lit = ITEMS[ls.id];
+      lost.push((lit ? lit.n : ls.id) + ' x' + ls.qty);
+    }
+    var keyLost = false;
+    for (var ki = 0; ki < p.bag.slots.length; ki++) {
+      var ks = p.bag.slots[ki];
+      if (ks && ITEMS[ks.id] && (ITEMS[ks.id].t === 'note' || ITEMS[ks.id].t === 'key')) keyLost = true;
+    }
+    var killer = p.lastHitBy || (raid.timeout ? 'timeout' : '未知');
+    var tips = [];
+    if (killer === '跑步丧尸' || killer === '僵尸犬') tips.push('高速单位追击致命：被围时先脱离再还手，开阔地甩掉它们比硬拼省弹药。');
+    if (killer === '暴君') tips.push('暴君伤害极高且自带减伤：别用近战硬碰，先拉开距离用枪点名，或利用建筑绕行。');
+    if (killer === '感染恶化') tips.push('感染恶化致死：出发前带抗生素或血清，受伤后及时用药；感染超过 60 会持续掉血减速。');
+    if (killer === '行尸' || killer === '缓慢丧尸' || killer === '爬行丧尸') tips.push('慢速围殴致命：注意背后与侧翼，被 3 只以上包围时优先冲出缺口，而不是原地开枪。');
+    if (raid.timeout) tips.push('撤离窗口关闭：开局先确认撤离点方位，留至少 60 秒赶路；别为最后一个容器贪到超时。');
+    if (!raid.timeout && raid.kills >= 6) tips.push('你击杀了不少却没能撤离：枪声引来太多尸群。多利用近战（安静）与地形周旋，只杀挡路的。');
+    if (!tips.length) tips.push('带更多医疗品与弹药出发；血月间隙把围墙电网补足；必要时按 F 建安全屋囤积物资。');
+    raid.result = { success: false, gain: [], xp: xpGain2, kills: raid.kills, searched: raid.searched, spGain: b.sp - spBefore2, grade: 'C', damaged: !!raid.damaged, reason: raid.timeout ? 'timeout' : 'dead', lootValue: Math.round(raid.lootValue || 0), time: Math.round(raid.time), limit: raid.timeLimit, lost: lost, killer: killer, tips: tips, keyLost: keyLost };
     b.lastReport = '第 ' + b.day + ' 天 · ' + raid.cfg.n + '：' + (raid.timeout ? '撤离窗口关闭，被困感染区' : '阵亡') + '，击杀 ' + raid.kills + '，搜刮 ' + raid.searched + ' 个容器，物资全部丢失。';
     raid.phase = 'dead';
   }
@@ -2414,7 +2438,7 @@ function updateZombies(dt) {
       }
       if (d < z.r + p.r + 10 && z.atkCd <= 0 && !((z.stun || 0) > 0)) {
         z.atkCd = z.t.atk;
-        hurtPlayer(z.t.dmg, Math.atan2(z.y - p.y, z.x - p.x));
+        hurtPlayer(z.t.dmg, Math.atan2(z.y - p.y, z.x - p.x), z);
         burst(p.x, p.y, 6, '#b02b2b', 140);
         raid.shake = Math.min(12, raid.shake + 5);
       }
@@ -3966,6 +3990,7 @@ function handleAction(act, val) {
     case 'skills': showScreen('skills'); break;
     case 'stash': showScreen('stash'); break;
     case 'notes': showScreen('notes'); break;
+    case 'ending': showScreen('ending'); break;
     case 'loadout': showScreen('loadout'); break;
     case 'switch': showScreen(val); break;
     case 'go':
@@ -4447,6 +4472,7 @@ UI.hub = function (b) {
     '<div class="row" style="margin-top:4px">' +
     '<button class="btn" data-act="stash">仓库</button>' +
     '<button class="btn" data-act="notes">档案</button>' +
+    (b.ending ? '<button class="btn" data-act="ending">结局</button>' : '') +
     '<button class="btn" data-act="save">手动存档</button>' +
     '<button class="btn" data-act="menu">主菜单</button>' +
     '</div></div>';
@@ -4639,10 +4665,33 @@ UI.result = function (b) {
     '<br>累计出击 ' + b.raids + ' 次，成功 ' + b.extracts + ' 次</div></div>' +
     '<div class="card"><h3>带回物资 <span class="tag">' + res.gain.length + ' 项</span></h3><div>' + (res.gain.length ? res.gain.map(function (s) { return '<span class="tag">' + s + '</span>'; }).join('') : '<span class="muted">无。这次什么都没带回来。</span>') + '</div></div>' +
     (res.damaged ? '<div class="card" style="margin-top:12px;border-color:#6a3a3a"><h3 style="color:#e08a8a">装备损坏</h3><div class="muted">有装备在阵亡中损坏，已进入待修列表，可在「营地建设」用废料修复。</div></div>' : '') +
+    (!res.success && res.lost ? '<div class="card" style="margin-top:12px;border-color:#6a3a3a"><h3 style="color:#e08a8a">失败复盘</h3>' +
+      '<div class="muted">死因：' + (res.reason === 'timeout' ? '撤离窗口关闭，被困感染区' : '被「' + res.killer + '」击倒') +
+      (res.keyLost ? '<br><span style="color:#e8c46a">⚠ 本次阵亡丢失了剧情关键物品（档案/门卡）——需要重新搜刮，成功撤离才生效。</span>' : '') +
+      '<br>丢失物资：' + (res.lost.length ? res.lost.map(function (s) { return '<span class="tag">' + s + '</span>'; }).join('') : '无') +
+      '<br>针对性建议：<br>· ' + res.tips.join('<br>· ') + '</div></div>' : '') +
     '</div>' +
     (b.lastBlood && b.day % 4 === 0 ? '<div class="card" style="margin-top:12px"><h3 style="color:#e0a86a">血月结算</h3><div class="muted">' + b.lastBlood + '</div></div>' : '') +
     (b.ending ? '<div class="card" style="margin-top:12px;border-color:#e8c46a"><h3 style="color:#e8c46a">结 局 · 起 飞</h3><div class="muted" style="white-space:pre-line">跑道尽头，运输机的引擎声压过了尸群的嘶吼。六份档案交到接应者手里——这座城市的真相，终于有人带了出去。</div></div>' : '') +
-    '<hr class="sep"><div class="row"><button class="btn primary" data-act="hub">返回营地</button><button class="btn" data-act="again">再来一次</button></div></div>';
+    '<hr class="sep"><div class="row">' +
+    (b.ending ? '<button class="btn primary" data-act="ending">查看结局专页</button>' : '<button class="btn primary" data-act="hub">返回营地</button>') +
+    '<button class="btn" data-act="again">再来一次</button></div></div>';
+  return html;
+};
+
+/* 结局专页：通关演出 + 全程统计。达成结局后可从 result / hub 反复进入 */
+UI.ending = function (b) {
+  var html = '';
+  var nc = Array.isArray(b.notes) ? b.notes.length : 0;
+  var extRate = b.raids ? Math.round(b.extracts / b.raids * 100) : 0;
+  html = '<div class="panel"><h1 class="title" style="color:#e8c46a">结 局 · 起 飞</h1><div class="sub">THE TRUTH GETS OUT</div>' +
+    '<div class="card" style="margin-top:18px;border-color:#e8c46a"><div class="muted" style="white-space:pre-line;font-size:14px;line-height:1.8">跑道尽头，运输机的引擎声压过了尸群的嘶吼。\n\n你回头看了最后一眼这座死去的城市——第 ' + b.endingDay + ' 天，你带着六份档案登上了机舱。喇叭里的广播早已停了，可这座城的真相，终于有人带了出去。\n\n幸存者不需要英雄。他们需要的是纸上的真相，和你活着带回来的手。</div></div>' +
+    '<div class="grid g2" style="margin-top:12px">' +
+    '<div class="card"><h3>全程统计</h3><div class="muted">存活天数 ' + b.endingDay + ' 天<br>出击 ' + b.raids + ' 次 · 成功撤离 ' + b.extracts + ' 次（' + extRate + '%）<br>阵亡 ' + b.deaths + ' 次<br>累计击杀 ' + b.totalKills + '<br>最佳评级 ' + (b.best ? 'S 线 ' + b.best + ' 分' : '—') + '</div></div>' +
+    '<div class="card"><h3>档案收集</h3><div class="muted">' + nc + '/6 份档案带出\n军事基地路线已解锁\n主线结局已达成</div></div>' +
+    '</div>' +
+    '<div class="muted" style="margin-top:12px;font-size:12px">结局达成后可继续游玩：血月防守、营地建设与四图搜刮照常进行。</div>' +
+    '<hr class="sep"><div class="row"><button class="btn primary" data-act="hub">返回营地（继续游玩）</button><button class="btn" data-act="menu">主菜单</button></div></div>';
   return html;
 };
 
